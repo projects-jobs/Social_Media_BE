@@ -1,0 +1,16 @@
+const mongoose = require("mongoose");
+
+const UserSchema = new mongoose.Schema(
+  {
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    profilePicture: { type: String, default: "" },
+    followers: { type: Array, default: [] },
+    followings: { type: Array, default: [] },
+  },
+  { timestamps: true }
+);
+
+// This will create a collection called 'users' (plural)
+module.exports = mongoose.model("User", UserSchema);
