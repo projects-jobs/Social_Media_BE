@@ -10,59 +10,86 @@ dotenv.config();
 
 const app = express();
 
-// ✅ FIX: Create upload folder at server startup (before multer ever runs)
-const uploadDir = path.join(__dirname, "public/images");
+// ── 1. FOLDER CREATION (The "Automatic" Way) ──────────────────────────────────
+// This ensures the folders exist before the server starts accepting requests.
+const uploadDir = path.join(__dirname, "public", "images");
+
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
-    console.log("📁 Created folder: public/images");
+    console.log("📁 Folder created:", uploadDir);
 }
 
+// ── 2. MIDDLEWARE ─────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
+// Serve the images folder so you can access them via URL
+// Example: http://localhost:5000/images/17123456.jpg
 app.use("/images", express.static(uploadDir));
 
-// MongoDB Connection
+// ── 3. DATABASE CONNECTION ────────────────────────────────────────────────────
 const dbUri = process.env.MONGO_URI;
-if (!dbUri) {
-    console.error("❌ Error: MONGO_URI is not defined in .env file");
-    process.exit(1);
-}
-
 mongoose.connect(dbUri)
-    .then(() => console.log("✅ MongoDB Connected Successfully"))
-    .catch((err) => console.log("❌ MongoDB Connection Error:", err));
+    .then(() => console.log("✅ MongoDB Connected"))
+    .catch((err) => console.error("❌ MongoDB Error:", err));
 
-// ✅ Multer — folder is guaranteed to exist by now, use absolute path
+// ── 4. MULTER STORAGE CONFIGURATION ───────────────────────────────────────────
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-        const fileName = req.body.name
-            ? req.body.name
-            : Date.now() + path.extname(file.originalname);
-        cb(null, fileName);
+        // Clean filename: timestamp + original name (no spaces)
+        const uniqueSuffix = Date.now() + "-" + file.originalname.replace(/\s+/g, "_");
+        cb(null, uniqueSuffix);
     },
 });
 
-const upload = multer({ storage });
-
-// Upload Route
-app.post("/api/upload", upload.single("file"), (req, res) => {
-    try {
-        res.status(200).json("File uploaded successfully");
-    } catch (error) {
-        console.error(error);
-        res.status(500).json("Error uploading file");
+const upload = multer({ 
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+            cb(null, true);
+        } else {
+            cb(new Error("Only images and videos are allowed!"), false);
+        }
     }
 });
 
-// API Routes
+// ── 5. THE UPLOAD ROUTE ───────────────────────────────────────────────────────
+app.post("/api/upload", (req, res) => {
+    // Manual invocation of multer to catch errors properly
+    upload.single("file")(req, res, async (err) => {
+        if (err) {
+            return res.status(400).json({ error: err.message });
+        }
+        if (!req.file) {
+            return res.status(400).json({ error: "Please upload a file" });
+        }
+
+        try {
+            // Optional: If you want to save this to a Post immediately:
+            // const newPost = new Post({ ...req.body, img: req.file.filename });
+            // await newPost.save();
+
+            res.status(200).json({ 
+                message: "File uploaded successfully", 
+                fileName: req.file.filename,
+                url: `${req.protocol}://${req.get("host")}/images/${req.file.filename}`
+            });
+        } catch (dbErr) {
+            res.status(500).json({ error: "File saved but DB entry failed" });
+        }
+    });
+});
+
+// ── 6. OTHER API ROUTES ───────────────────────────────────────────────────────
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/posts", require("./routes/posts"));
 app.use("/api/users", require("./routes/users"));
 
+// ── 7. START SERVER ───────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`🚀 Backend server is running on port ${PORT}`);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
